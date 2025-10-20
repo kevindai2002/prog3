@@ -26,6 +26,12 @@ var colorBuffer; // buffer for vertex colors
 var numTriangles = 0; // total number of triangles to render
 var shaderProgram; // shader program reference
 
+// Part 3 additions
+var normalBuffer; // buffer for vertex normals
+var ambientBuffer; // buffer for ambient colors
+var specularBuffer; // buffer for specular colors
+var nBuffer; // buffer for shininess values
+
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -85,6 +91,10 @@ function loadTriangles() {
     if (inputTriangles != String.null) {
         var coordArray = []; // 1D array of vertex coords for WebGL
         var colorArray = []; // 1D array of vertex colors for WebGL
+        var normalArray = []; // 1D array of vertex normals for WebGL
+        var ambientArray = []; // 1D array of ambient colors
+        var specularArray = []; // 1D array of specular colors
+        var nArray = []; // 1D array of shininess values
 
         // Loop through each triangle set
         for (var whichSet=0; whichSet<inputTriangles.length; whichSet++) {
@@ -98,6 +108,7 @@ function loadTriangles() {
                 for (var vertIdx=0; vertIdx<3; vertIdx++) {
                     var vtxIndex = triangle[vertIdx];
                     var vertex = currentSet.vertices[vtxIndex];
+                    var normal = currentSet.normals[vtxIndex];
 
                     // Add vertex coordinates
                     coordArray.push(vertex[0], vertex[1], vertex[2]);
@@ -106,6 +117,22 @@ function loadTriangles() {
                     colorArray.push(currentSet.material.diffuse[0],
                                    currentSet.material.diffuse[1],
                                    currentSet.material.diffuse[2]);
+
+                    // Add normal for this vertex
+                    normalArray.push(normal[0], normal[1], normal[2]);
+
+                    // Add ambient color
+                    ambientArray.push(currentSet.material.ambient[0],
+                                     currentSet.material.ambient[1],
+                                     currentSet.material.ambient[2]);
+
+                    // Add specular color
+                    specularArray.push(currentSet.material.specular[0],
+                                      currentSet.material.specular[1],
+                                      currentSet.material.specular[2]);
+
+                    // Add shininess
+                    nArray.push(currentSet.material.n);
                 }
                 numTriangles++;
             }
@@ -121,6 +148,26 @@ function loadTriangles() {
         gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
         gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(colorArray),gl.STATIC_DRAW);
 
+        // send the vertex normals to webGL
+        normalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(normalArray),gl.STATIC_DRAW);
+
+        // send the ambient colors to webGL
+        ambientBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(ambientArray),gl.STATIC_DRAW);
+
+        // send the specular colors to webGL
+        specularBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(specularArray),gl.STATIC_DRAW);
+
+        // send the shininess values to webGL
+        nBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(nArray),gl.STATIC_DRAW);
+
         console.log("Loaded " + numTriangles + " triangles");
     } // end if triangles found
 } // end load triangles
@@ -128,28 +175,77 @@ function loadTriangles() {
 // setup the webGL shaders
 function setupShaders() {
 
-    // define vertex shader - applies MVP transform
+    // define vertex shader - applies MVP transform and passes data to fragment shader
     var vShaderCode = `
         attribute vec3 vertexPosition;
+        attribute vec3 vertexNormal;
         attribute vec3 vertexColor;
+        attribute vec3 vertexAmbient;
+        attribute vec3 vertexSpecular;
+        attribute float vertexN;
 
         uniform mat4 uMVP;
 
-        varying vec3 vColor;
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
+        varying vec3 vAmbient;
+        varying vec3 vDiffuse;
+        varying vec3 vSpecular;
+        varying float vN;
 
         void main(void) {
             gl_Position = uMVP * vec4(vertexPosition, 1.0);
-            vColor = vertexColor;
+            vWorldPos = vertexPosition;
+            vNormal = vertexNormal;
+            vAmbient = vertexAmbient;
+            vDiffuse = vertexColor;
+            vSpecular = vertexSpecular;
+            vN = vertexN;
         }
     `;
 
-    // define fragment shader - outputs diffuse color
+    // define fragment shader - implements Blinn-Phong lighting
     var fShaderCode = `
         precision mediump float;
-        varying vec3 vColor;
+
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
+        varying vec3 vAmbient;
+        varying vec3 vDiffuse;
+        varying vec3 vSpecular;
+        varying float vN;
+
+        uniform vec3 uLightPos;
+        uniform vec3 uEyePos;
 
         void main(void) {
-            gl_FragColor = vec4(vColor, 1.0);
+            // Normalize interpolated normal
+            vec3 N = normalize(vNormal);
+
+            // Light direction
+            vec3 L = normalize(uLightPos - vWorldPos);
+
+            // View direction
+            vec3 V = normalize(uEyePos - vWorldPos);
+
+            // Halfway vector for Blinn-Phong
+            vec3 H = normalize(L + V);
+
+            // Ambient component
+            vec3 ambient = vAmbient;
+
+            // Diffuse component
+            float NdotL = max(dot(N, L), 0.0);
+            vec3 diffuse = vDiffuse * NdotL;
+
+            // Specular component (Blinn-Phong)
+            float NdotH = max(dot(N, H), 0.0);
+            vec3 specular = vSpecular * pow(NdotH, vN);
+
+            // Combine all components
+            vec3 color = ambient + diffuse + specular;
+
+            gl_FragColor = vec4(color, 1.0);
         }
     `;
 
@@ -213,8 +309,22 @@ function renderTriangles() {
 
     // Get shader locations
     var mvpUniform = gl.getUniformLocation(shaderProgram, "uMVP");
+    var lightPosUniform = gl.getUniformLocation(shaderProgram, "uLightPos");
+    var eyePosUniform = gl.getUniformLocation(shaderProgram, "uEyePos");
+
     var colorAttrib = gl.getAttribLocation(shaderProgram, "vertexColor");
+    var normalAttrib = gl.getAttribLocation(shaderProgram, "vertexNormal");
+    var ambientAttrib = gl.getAttribLocation(shaderProgram, "vertexAmbient");
+    var specularAttrib = gl.getAttribLocation(shaderProgram, "vertexSpecular");
+    var nAttrib = gl.getAttribLocation(shaderProgram, "vertexN");
+
+    // Enable vertex attributes
+    gl.enableVertexAttribArray(vertexPositionAttrib);
     gl.enableVertexAttribArray(colorAttrib);
+    gl.enableVertexAttribArray(normalAttrib);
+    gl.enableVertexAttribArray(ambientAttrib);
+    gl.enableVertexAttribArray(specularAttrib);
+    gl.enableVertexAttribArray(nAttrib);
 
     // Bind vertex buffer
     gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer);
@@ -224,8 +334,26 @@ function renderTriangles() {
     gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
     gl.vertexAttribPointer(colorAttrib,3,gl.FLOAT,false,0,0);
 
-    // Send MVP matrix to shader
+    // Bind normal buffer
+    gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer);
+    gl.vertexAttribPointer(normalAttrib,3,gl.FLOAT,false,0,0);
+
+    // Bind ambient buffer
+    gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer);
+    gl.vertexAttribPointer(ambientAttrib,3,gl.FLOAT,false,0,0);
+
+    // Bind specular buffer
+    gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer);
+    gl.vertexAttribPointer(specularAttrib,3,gl.FLOAT,false,0,0);
+
+    // Bind shininess buffer
+    gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer);
+    gl.vertexAttribPointer(nAttrib,1,gl.FLOAT,false,0,0);
+
+    // Send uniforms to shader
     gl.uniformMatrix4fv(mvpUniform, false, mvpMatrix);
+    gl.uniform3f(lightPosUniform, -0.5, 1.5, -0.5); // Light at (-0.5, 1.5, -0.5)
+    gl.uniform3f(eyePosUniform, 0.5, 0.5, -0.5); // Eye at (0.5, 0.5, -0.5)
 
     // Draw all triangles
     gl.drawArrays(gl.TRIANGLES,0,numTriangles * 3);

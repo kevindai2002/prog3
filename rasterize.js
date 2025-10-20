@@ -25,6 +25,7 @@ var inputTriangles = null; // the input triangles
 var colorBuffer; // buffer for vertex colors
 var numTriangles = 0; // total number of triangles to render
 var shaderProgram; // shader program reference
+var triangleSets = []; // array to store each triangle set's data separately
 
 // Part 3 additions
 var normalBuffer; // buffer for vertex normals
@@ -40,6 +41,10 @@ var viewDirection = vec3.create(); // view direction vector
 var viewRight = vec3.create(); // right vector
 var viewUp = vec3.create(); // up vector
 
+// Part 5 additions - model selection
+var selectedModel = -1; // index of selected model (-1 = none)
+var modelTransforms = []; // array of transform matrices for each model
+
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -53,11 +58,49 @@ function initViewVectors() {
     vec3.normalize(viewUp, viewUp);
 }
 
-// Handle keyboard input for camera control
+// Handle keyboard input for camera control and model selection
 function handleKeyPress(event) {
     var key = event.key;
     var translationAmount = 0.05; // translation step size
     var rotationAmount = 0.05; // rotation step size in radians
+
+    // Part 5: Model selection
+    if (key == 'ArrowLeft') {
+        event.preventDefault();
+        // Deselect current
+        if (selectedModel >= 0) {
+            mat4.identity(modelTransforms[selectedModel]);
+        }
+        // Select previous
+        selectedModel--;
+        if (selectedModel < 0) selectedModel = triangleSets.length - 1;
+        // Apply highlight scale (1.2x)
+        mat4.scale(modelTransforms[selectedModel], modelTransforms[selectedModel], [1.2, 1.2, 1.2]);
+        renderTriangles();
+        return;
+    } else if (key == 'ArrowRight') {
+        event.preventDefault();
+        // Deselect current
+        if (selectedModel >= 0) {
+            mat4.identity(modelTransforms[selectedModel]);
+        }
+        // Select next
+        selectedModel++;
+        if (selectedModel >= triangleSets.length) selectedModel = 0;
+        // Apply highlight scale (1.2x)
+        mat4.scale(modelTransforms[selectedModel], modelTransforms[selectedModel], [1.2, 1.2, 1.2]);
+        renderTriangles();
+        return;
+    } else if (key == ' ') {
+        event.preventDefault();
+        // Deselect current
+        if (selectedModel >= 0) {
+            mat4.identity(modelTransforms[selectedModel]);
+            selectedModel = -1;
+        }
+        renderTriangles();
+        return;
+    }
 
     switch(key) {
         // Translation along view X (left/right)
@@ -184,16 +227,17 @@ function setupWebGL() {
 function loadTriangles() {
     inputTriangles = getJSONFile(INPUT_TRIANGLES_URL,"triangles");
     if (inputTriangles != String.null) {
-        var coordArray = []; // 1D array of vertex coords for WebGL
-        var colorArray = []; // 1D array of vertex colors for WebGL
-        var normalArray = []; // 1D array of vertex normals for WebGL
-        var ambientArray = []; // 1D array of ambient colors
-        var specularArray = []; // 1D array of specular colors
-        var nArray = []; // 1D array of shininess values
 
-        // Loop through each triangle set
+        // Loop through each triangle set and store separately
         for (var whichSet=0; whichSet<inputTriangles.length; whichSet++) {
             var currentSet = inputTriangles[whichSet];
+            var coordArray = [];
+            var colorArray = [];
+            var normalArray = [];
+            var ambientArray = [];
+            var specularArray = [];
+            var nArray = [];
+            var numSetTriangles = 0;
 
             // For each triangle in this set
             for (var triIdx=0; triIdx<currentSet.triangles.length; triIdx++) {
@@ -229,41 +273,52 @@ function loadTriangles() {
                     // Add shininess
                     nArray.push(currentSet.material.n);
                 }
-                numTriangles++;
+                numSetTriangles++;
             }
+
+            // Create buffers for this set
+            var vBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coordArray), gl.STATIC_DRAW);
+
+            var cBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, cBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colorArray), gl.STATIC_DRAW);
+
+            var nmlBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, nmlBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normalArray), gl.STATIC_DRAW);
+
+            var ambBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, ambBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ambientArray), gl.STATIC_DRAW);
+
+            var specBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, specBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(specularArray), gl.STATIC_DRAW);
+
+            var nBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, nBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nArray), gl.STATIC_DRAW);
+
+            // Store this set's data
+            triangleSets.push({
+                vertexBuffer: vBuffer,
+                colorBuffer: cBuffer,
+                normalBuffer: nmlBuffer,
+                ambientBuffer: ambBuffer,
+                specularBuffer: specBuffer,
+                nBuffer: nBuf,
+                numTriangles: numSetTriangles
+            });
+
+            // Initialize transform matrix for this set (identity)
+            modelTransforms.push(mat4.create());
+
+            numTriangles += numSetTriangles;
         } // end for each triangle set
 
-        // send the vertex coords to webGL
-        vertexBuffer = gl.createBuffer(); // init empty vertex coord buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer); // activate that buffer
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(coordArray),gl.STATIC_DRAW); // coords to that buffer
-
-        // send the vertex colors to webGL
-        colorBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(colorArray),gl.STATIC_DRAW);
-
-        // send the vertex normals to webGL
-        normalBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(normalArray),gl.STATIC_DRAW);
-
-        // send the ambient colors to webGL
-        ambientBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(ambientArray),gl.STATIC_DRAW);
-
-        // send the specular colors to webGL
-        specularBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(specularArray),gl.STATIC_DRAW);
-
-        // send the shininess values to webGL
-        nBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(nArray),gl.STATIC_DRAW);
-
-        console.log("Loaded " + numTriangles + " triangles");
+        console.log("Loaded " + inputTriangles.length + " triangle sets, " + numTriangles + " total triangles");
     } // end if triangles found
 } // end load triangles
 
@@ -391,14 +446,6 @@ function renderTriangles() {
     var projMatrix = mat4.create();
     mat4.perspective(projMatrix, Math.PI / 2, 1.0, 0.1, 10.0);
 
-    // Model matrix (identity for now)
-    var modelMatrix = mat4.create();
-
-    // Combine into MVP
-    var mvpMatrix = mat4.create();
-    mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
-    mat4.multiply(mvpMatrix, mvpMatrix, modelMatrix);
-
     // Get shader locations
     var mvpUniform = gl.getUniformLocation(shaderProgram, "uMVP");
     var lightPosUniform = gl.getUniformLocation(shaderProgram, "uLightPos");
@@ -418,37 +465,52 @@ function renderTriangles() {
     gl.enableVertexAttribArray(specularAttrib);
     gl.enableVertexAttribArray(nAttrib);
 
-    // Bind vertex buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,vertexBuffer);
-    gl.vertexAttribPointer(vertexPositionAttrib,3,gl.FLOAT,false,0,0);
-
-    // Bind color buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
-    gl.vertexAttribPointer(colorAttrib,3,gl.FLOAT,false,0,0);
-
-    // Bind normal buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,normalBuffer);
-    gl.vertexAttribPointer(normalAttrib,3,gl.FLOAT,false,0,0);
-
-    // Bind ambient buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,ambientBuffer);
-    gl.vertexAttribPointer(ambientAttrib,3,gl.FLOAT,false,0,0);
-
-    // Bind specular buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,specularBuffer);
-    gl.vertexAttribPointer(specularAttrib,3,gl.FLOAT,false,0,0);
-
-    // Bind shininess buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER,nBuffer);
-    gl.vertexAttribPointer(nAttrib,1,gl.FLOAT,false,0,0);
-
-    // Send uniforms to shader
-    gl.uniformMatrix4fv(mvpUniform, false, mvpMatrix);
+    // Set light and eye uniforms (same for all sets)
     gl.uniform3f(lightPosUniform, -0.5, 1.5, -0.5); // Light at (-0.5, 1.5, -0.5)
     gl.uniform3fv(eyePosUniform, cameraPosition); // Dynamic eye position
 
-    // Draw all triangles
-    gl.drawArrays(gl.TRIANGLES,0,numTriangles * 3);
+    // Render each triangle set with its own transform
+    for (var setIdx = 0; setIdx < triangleSets.length; setIdx++) {
+        var triSet = triangleSets[setIdx];
+
+        // Get model matrix for this set
+        var modelMatrix = modelTransforms[setIdx];
+
+        // Combine into MVP
+        var mvpMatrix = mat4.create();
+        mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
+        mat4.multiply(mvpMatrix, mvpMatrix, modelMatrix);
+
+        // Send MVP to shader
+        gl.uniformMatrix4fv(mvpUniform, false, mvpMatrix);
+
+        // Bind vertex buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.vertexBuffer);
+        gl.vertexAttribPointer(vertexPositionAttrib, 3, gl.FLOAT, false, 0, 0);
+
+        // Bind color buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.colorBuffer);
+        gl.vertexAttribPointer(colorAttrib, 3, gl.FLOAT, false, 0, 0);
+
+        // Bind normal buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.normalBuffer);
+        gl.vertexAttribPointer(normalAttrib, 3, gl.FLOAT, false, 0, 0);
+
+        // Bind ambient buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.ambientBuffer);
+        gl.vertexAttribPointer(ambientAttrib, 3, gl.FLOAT, false, 0, 0);
+
+        // Bind specular buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.specularBuffer);
+        gl.vertexAttribPointer(specularAttrib, 3, gl.FLOAT, false, 0, 0);
+
+        // Bind shininess buffer
+        gl.bindBuffer(gl.ARRAY_BUFFER, triSet.nBuffer);
+        gl.vertexAttribPointer(nAttrib, 1, gl.FLOAT, false, 0, 0);
+
+        // Draw this triangle set
+        gl.drawArrays(gl.TRIANGLES, 0, triSet.numTriangles * 3);
+    }
 } // end render triangles
 
 
@@ -462,7 +524,8 @@ function main() {
   initViewVectors(); // initialize camera view vectors
   renderTriangles(); // draw the triangles using webGL
 
-  // Add keyboard event listener for camera control
+  // Add keyboard event listeners for camera control and model selection
   document.addEventListener('keypress', handleKeyPress);
+  document.addEventListener('keydown', handleKeyPress); // for arrow keys
 
 } // end main

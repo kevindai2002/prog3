@@ -27,6 +27,11 @@ var numTriangles = 0; // total number of triangles to render
 var shaderProgram; // shader program reference
 var triangleSets = []; // array to store each triangle set's data separately
 
+// Extra credit: ellipsoids
+var inputEllipsoids = null; // the input ellipsoids
+var ellipsoidSets = []; // array to store each ellipsoid's triangle data
+var numTriangleSetsWithoutEllipsoids = 0; // track original triangle count
+
 // Part 3 additions
 var normalBuffer; // buffer for vertex normals
 var ambientBuffer; // buffer for ambient colors
@@ -49,8 +54,53 @@ var modelTransforms = []; // array of transform matrices for each model
 var modelTranslations = []; // translation vectors for each model
 var modelRotations = []; // rotation matrices for each model
 
+// Part 7 additions - custom mode
+var customMode = false; // flag for custom "interesting" mode
+var customModeTime = 0; // time counter for animations
+var ellipsoidsLoaded = false; // flag to track if ellipsoids have been loaded
+
 
 // ASSIGNMENT HELPER FUNCTIONS
+
+// Extra credit: Generate sphere mesh with lat/long parameterization
+function generateSphereMesh(latitudeBands, longitudeBands) {
+    var vertices = [];
+    var normals = [];
+    var indices = [];
+
+    // Generate vertices and normals
+    for (var lat = 0; lat <= latitudeBands; lat++) {
+        var theta = lat * Math.PI / latitudeBands;
+        var sinTheta = Math.sin(theta);
+        var cosTheta = Math.cos(theta);
+
+        for (var lon = 0; lon <= longitudeBands; lon++) {
+            var phi = lon * 2 * Math.PI / longitudeBands;
+            var sinPhi = Math.sin(phi);
+            var cosPhi = Math.cos(phi);
+
+            var x = cosPhi * sinTheta;
+            var y = cosTheta;
+            var z = sinPhi * sinTheta;
+
+            vertices.push(x, y, z);
+            normals.push(x, y, z); // Normal is same as position for unit sphere
+        }
+    }
+
+    // Generate indices
+    for (var lat = 0; lat < latitudeBands; lat++) {
+        for (var lon = 0; lon < longitudeBands; lon++) {
+            var first = (lat * (longitudeBands + 1)) + lon;
+            var second = first + longitudeBands + 1;
+
+            indices.push(first, second, first + 1);
+            indices.push(second, second + 1, first + 1);
+        }
+    }
+
+    return { vertices: vertices, normals: normals, indices: indices };
+}
 
 // Initialize view vectors
 function initViewVectors() {
@@ -89,6 +139,44 @@ function handleKeyPress(event) {
     var key = event.key;
     var translationAmount = 0.05; // translation step size
     var rotationAmount = 0.05; // rotation step size in radians
+
+    // Part 7: Toggle custom mode with ! key
+    if (key == '!') {
+        event.preventDefault();
+        customMode = !customMode;
+
+        if (customMode) {
+            // Entering Part 7 mode - load ellipsoids if not loaded
+            if (!ellipsoidsLoaded) {
+                loadEllipsoids();
+                ellipsoidsLoaded = true;
+            } else {
+                // Ellipsoids already loaded, just re-add them to triangleSets
+                for (var i = 0; i < ellipsoidSets.length; i++) {
+                    triangleSets.push(ellipsoidSets[i]);
+                    modelTransforms.push(mat4.create());
+                    modelTranslations.push(vec3.create());
+                    modelRotations.push(mat4.create());
+                }
+            }
+        } else {
+            // Exiting Part 7 mode - remove ellipsoids from triangleSets
+            triangleSets.length = numTriangleSetsWithoutEllipsoids;
+            modelTransforms.length = numTriangleSetsWithoutEllipsoids;
+            modelTranslations.length = numTriangleSetsWithoutEllipsoids;
+            modelRotations.length = numTriangleSetsWithoutEllipsoids;
+
+            // Deselect if selected model was an ellipsoid
+            if (selectedModel >= numTriangleSetsWithoutEllipsoids) {
+                selectedModel = -1;
+            }
+        }
+
+        updateModeIndicator();
+        console.log("Custom mode: " + (customMode ? "ON" : "OFF"));
+        renderTriangles();
+        return;
+    }
 
     // Part 5: Model selection
     if (key == 'ArrowLeft') {
@@ -443,8 +531,111 @@ function loadTriangles() {
         } // end for each triangle set
 
         console.log("Loaded " + inputTriangles.length + " triangle sets, " + numTriangles + " total triangles");
+        numTriangleSetsWithoutEllipsoids = triangleSets.length; // Save count before adding ellipsoids
     } // end if triangles found
 } // end load triangles
+
+// Extra credit: Load ellipsoids and create triangle meshes for them
+function loadEllipsoids() {
+    try {
+        inputEllipsoids = getJSONFile(INPUT_ELLIPSOIDS_URL, "ellipsoids");
+    } catch(e) {
+        console.log("Could not load ellipsoids: " + e);
+        return;
+    }
+
+    if (inputEllipsoids != String.null && inputEllipsoids != null) {
+        // Generate sphere mesh once (will be transformed to ellipsoids)
+        var sphereMesh = generateSphereMesh(20, 20); // 20x20 resolution
+
+        for (var whichSet = 0; whichSet < inputEllipsoids.length; whichSet++) {
+            var ellipsoid = inputEllipsoids[whichSet];
+            var coordArray = [];
+            var colorArray = [];
+            var normalArray = [];
+            var ambientArray = [];
+            var specularArray = [];
+            var nArray = [];
+
+            // Transform sphere vertices to ellipsoid
+            for (var i = 0; i < sphereMesh.indices.length; i++) {
+                var idx = sphereMesh.indices[i];
+                var x = sphereMesh.vertices[idx * 3];
+                var y = sphereMesh.vertices[idx * 3 + 1];
+                var z = sphereMesh.vertices[idx * 3 + 2];
+
+                // Scale by radii and translate to center
+                var vx = x * ellipsoid.a + ellipsoid.x;
+                var vy = y * ellipsoid.b + ellipsoid.y;
+                var vz = z * ellipsoid.c + ellipsoid.z;
+
+                coordArray.push(vx, vy, vz);
+
+                // Transform normal by radii (for ellipsoid, normal needs special handling)
+                var nx = sphereMesh.normals[idx * 3] / ellipsoid.a;
+                var ny = sphereMesh.normals[idx * 3 + 1] / ellipsoid.b;
+                var nz = sphereMesh.normals[idx * 3 + 2] / ellipsoid.c;
+                var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                normalArray.push(nx / len, ny / len, nz / len);
+
+                // Material properties
+                colorArray.push(ellipsoid.diffuse[0], ellipsoid.diffuse[1], ellipsoid.diffuse[2]);
+                ambientArray.push(ellipsoid.ambient[0], ellipsoid.ambient[1], ellipsoid.ambient[2]);
+                specularArray.push(ellipsoid.specular[0], ellipsoid.specular[1], ellipsoid.specular[2]);
+                nArray.push(ellipsoid.n);
+            }
+
+            // Create buffers
+            var vBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(coordArray), gl.STATIC_DRAW);
+
+            var cBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, cBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colorArray), gl.STATIC_DRAW);
+
+            var nmlBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, nmlBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normalArray), gl.STATIC_DRAW);
+
+            var ambBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, ambBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ambientArray), gl.STATIC_DRAW);
+
+            var specBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, specBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(specularArray), gl.STATIC_DRAW);
+
+            var nBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, nBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nArray), gl.STATIC_DRAW);
+
+            // Store ellipsoid data
+            var ellipsoidData = {
+                vertexBuffer: vBuffer,
+                colorBuffer: cBuffer,
+                normalBuffer: nmlBuffer,
+                ambientBuffer: ambBuffer,
+                specularBuffer: specBuffer,
+                nBuffer: nBuf,
+                numTriangles: sphereMesh.indices.length / 3
+            };
+
+            // Save to ellipsoidSets array
+            ellipsoidSets.push(ellipsoidData);
+
+            // Add to triangleSets (since we're in Part 7 mode)
+            triangleSets.push(ellipsoidData);
+
+            // Initialize transform for this ellipsoid
+            modelTransforms.push(mat4.create());
+            modelTranslations.push(vec3.create());
+            modelRotations.push(mat4.create());
+        }
+
+        console.log("Loaded " + inputEllipsoids.length + " ellipsoids");
+    }
+} // end load ellipsoids
 
 // setup the webGL shaders
 function setupShaders() {
@@ -572,6 +763,8 @@ function renderTriangles() {
 
     // Get shader locations
     var mvpUniform = gl.getUniformLocation(shaderProgram, "uMVP");
+    var modelUniform = gl.getUniformLocation(shaderProgram, "uModel");
+    var normalMatrixUniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix");
     var lightPosUniform = gl.getUniformLocation(shaderProgram, "uLightPos");
     var eyePosUniform = gl.getUniformLocation(shaderProgram, "uEyePos");
 
@@ -600,13 +793,25 @@ function renderTriangles() {
         // Get model matrix for this set
         var modelMatrix = modelTransforms[setIdx];
 
+        // Part 7: Apply custom effects in custom mode
+        if (customMode) {
+            // TODO: Implement your interesting visual effects here
+        }
+
         // Combine into MVP
         var mvpMatrix = mat4.create();
         mat4.multiply(mvpMatrix, projMatrix, viewMatrix);
         mat4.multiply(mvpMatrix, mvpMatrix, modelMatrix);
 
-        // Send MVP to shader
+        // Compute normal matrix (inverse transpose of model matrix)
+        var normalMatrix = mat4.create();
+        mat4.invert(normalMatrix, modelMatrix);
+        mat4.transpose(normalMatrix, normalMatrix);
+
+        // Send matrices to shader
         gl.uniformMatrix4fv(mvpUniform, false, mvpMatrix);
+        gl.uniformMatrix4fv(modelUniform, false, modelMatrix);
+        gl.uniformMatrix4fv(normalMatrixUniform, false, normalMatrix);
 
         // Bind vertex buffer
         gl.bindBuffer(gl.ARRAY_BUFFER, triSet.vertexBuffer);
@@ -636,6 +841,18 @@ function renderTriangles() {
         gl.drawArrays(gl.TRIANGLES, 0, triSet.numTriangles * 3);
     }
 } // end render triangles
+
+// Update mode indicator text
+function updateModeIndicator() {
+    var indicator = document.getElementById("modeIndicator");
+    if (customMode) {
+        indicator.textContent = "Part 7";
+        indicator.className = "part7";
+    } else {
+        indicator.textContent = "Part 1-6";
+        indicator.className = "";
+    }
+}
 
 
 /* MAIN -- HERE is where execution begins after window load */

@@ -45,6 +45,10 @@ var viewUp = vec3.create(); // up vector
 var selectedModel = -1; // index of selected model (-1 = none)
 var modelTransforms = []; // array of transform matrices for each model
 
+// Part 6 additions - model transformations
+var modelTranslations = []; // translation vectors for each model
+var modelRotations = []; // rotation matrices for each model
+
 
 // ASSIGNMENT HELPER FUNCTIONS
 
@@ -58,6 +62,28 @@ function initViewVectors() {
     vec3.normalize(viewUp, viewUp);
 }
 
+// Update model transform from its components
+// Order: scale (if selected), then rotate, then translate
+function updateModelTransform(modelIndex) {
+    var transform = mat4.create();
+
+    // Start with identity
+    mat4.identity(transform);
+
+    // Apply translation
+    mat4.translate(transform, transform, modelTranslations[modelIndex]);
+
+    // Apply rotation
+    mat4.multiply(transform, transform, modelRotations[modelIndex]);
+
+    // Apply scale if this model is selected (1.2x highlight)
+    if (modelIndex === selectedModel) {
+        mat4.scale(transform, transform, [1.2, 1.2, 1.2]);
+    }
+
+    modelTransforms[modelIndex] = transform;
+}
+
 // Handle keyboard input for camera control and model selection
 function handleKeyPress(event) {
     var key = event.key;
@@ -67,36 +93,33 @@ function handleKeyPress(event) {
     // Part 5: Model selection
     if (key == 'ArrowLeft') {
         event.preventDefault();
-        // Deselect current
-        if (selectedModel >= 0) {
-            mat4.identity(modelTransforms[selectedModel]);
-        }
+        var oldSelected = selectedModel;
         // Select previous
         selectedModel--;
         if (selectedModel < 0) selectedModel = triangleSets.length - 1;
-        // Apply highlight scale (1.2x)
-        mat4.scale(modelTransforms[selectedModel], modelTransforms[selectedModel], [1.2, 1.2, 1.2]);
+        // Update transforms
+        if (oldSelected >= 0) updateModelTransform(oldSelected);
+        updateModelTransform(selectedModel);
         renderTriangles();
         return;
     } else if (key == 'ArrowRight') {
         event.preventDefault();
-        // Deselect current
-        if (selectedModel >= 0) {
-            mat4.identity(modelTransforms[selectedModel]);
-        }
+        var oldSelected = selectedModel;
         // Select next
         selectedModel++;
         if (selectedModel >= triangleSets.length) selectedModel = 0;
-        // Apply highlight scale (1.2x)
-        mat4.scale(modelTransforms[selectedModel], modelTransforms[selectedModel], [1.2, 1.2, 1.2]);
+        // Update transforms
+        if (oldSelected >= 0) updateModelTransform(oldSelected);
+        updateModelTransform(selectedModel);
         renderTriangles();
         return;
     } else if (key == ' ') {
         event.preventDefault();
         // Deselect current
         if (selectedModel >= 0) {
-            mat4.identity(modelTransforms[selectedModel]);
+            var oldSelected = selectedModel;
             selectedModel = -1;
+            updateModelTransform(oldSelected);
         }
         renderTriangles();
         return;
@@ -167,6 +190,103 @@ function handleKeyPress(event) {
             vec3.add(lookAtPoint, cameraPosition, viewDirection);
             vec3.cross(viewUp, viewRight, viewDirection);
             vec3.normalize(viewUp, viewUp);
+            break;
+
+        // Part 6: Model transformations (only if a model is selected)
+        // Translation along view X
+        case 'k':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewRight, -translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case ';':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewRight, translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+
+        // Translation along view Z
+        case 'o':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewDirection, translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case 'l':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewDirection, -translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+
+        // Translation along view Y
+        case 'i':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewUp, translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case 'p':
+            if (selectedModel >= 0) {
+                vec3.scaleAndAdd(modelTranslations[selectedModel], modelTranslations[selectedModel], viewUp, -translationAmount);
+                updateModelTransform(selectedModel);
+            }
+            break;
+
+        // Rotation around view Y (yaw)
+        case 'K':
+            if (selectedModel >= 0) {
+                var yawMat = mat4.create();
+                mat4.rotate(yawMat, yawMat, rotationAmount, viewUp);
+                mat4.multiply(modelRotations[selectedModel], yawMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case ':':
+            if (selectedModel >= 0) {
+                var yawMat = mat4.create();
+                mat4.rotate(yawMat, yawMat, -rotationAmount, viewUp);
+                mat4.multiply(modelRotations[selectedModel], yawMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
+            break;
+
+        // Rotation around view X (pitch)
+        case 'O':
+            if (selectedModel >= 0) {
+                var pitchMat = mat4.create();
+                mat4.rotate(pitchMat, pitchMat, rotationAmount, viewRight);
+                mat4.multiply(modelRotations[selectedModel], pitchMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case 'L':
+            if (selectedModel >= 0) {
+                var pitchMat = mat4.create();
+                mat4.rotate(pitchMat, pitchMat, -rotationAmount, viewRight);
+                mat4.multiply(modelRotations[selectedModel], pitchMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
+            break;
+
+        // Rotation around view Z (roll)
+        case 'I':
+            if (selectedModel >= 0) {
+                var rollMat = mat4.create();
+                mat4.rotate(rollMat, rollMat, rotationAmount, viewDirection);
+                mat4.multiply(modelRotations[selectedModel], rollMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
+            break;
+        case 'P':
+            if (selectedModel >= 0) {
+                var rollMat = mat4.create();
+                mat4.rotate(rollMat, rollMat, -rotationAmount, viewDirection);
+                mat4.multiply(modelRotations[selectedModel], rollMat, modelRotations[selectedModel]);
+                updateModelTransform(selectedModel);
+            }
             break;
     }
 
@@ -314,6 +434,10 @@ function loadTriangles() {
 
             // Initialize transform matrix for this set (identity)
             modelTransforms.push(mat4.create());
+
+            // Initialize translation and rotation for Part 6
+            modelTranslations.push(vec3.create());
+            modelRotations.push(mat4.create());
 
             numTriangles += numSetTriangles;
         } // end for each triangle set

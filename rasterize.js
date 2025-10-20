@@ -32,8 +32,103 @@ var ambientBuffer; // buffer for ambient colors
 var specularBuffer; // buffer for specular colors
 var nBuffer; // buffer for shininess values
 
+// Part 4 additions - camera control
+var cameraPosition = vec3.fromValues(0.5, 0.5, -0.5); // camera position
+var lookAtPoint = vec3.fromValues(0.5, 0.5, 0.0); // look at point
+var upVector = vec3.fromValues(0.0, 1.0, 0.0); // up vector
+var viewDirection = vec3.create(); // view direction vector
+var viewRight = vec3.create(); // right vector
+var viewUp = vec3.create(); // up vector
+
 
 // ASSIGNMENT HELPER FUNCTIONS
+
+// Initialize view vectors
+function initViewVectors() {
+    vec3.subtract(viewDirection, lookAtPoint, cameraPosition);
+    vec3.normalize(viewDirection, viewDirection);
+    vec3.cross(viewRight, viewDirection, upVector);
+    vec3.normalize(viewRight, viewRight);
+    vec3.cross(viewUp, viewRight, viewDirection);
+    vec3.normalize(viewUp, viewUp);
+}
+
+// Handle keyboard input for camera control
+function handleKeyPress(event) {
+    var key = event.key;
+    var translationAmount = 0.05; // translation step size
+    var rotationAmount = 0.05; // rotation step size in radians
+
+    switch(key) {
+        // Translation along view X (left/right)
+        case 'a':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewRight, -translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewRight, -translationAmount);
+            break;
+        case 'd':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewRight, translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewRight, translationAmount);
+            break;
+
+        // Translation along view Z (forward/backward)
+        case 'w':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewDirection, translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewDirection, translationAmount);
+            break;
+        case 's':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewDirection, -translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewDirection, -translationAmount);
+            break;
+
+        // Translation along view Y (up/down)
+        case 'q':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewUp, translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewUp, translationAmount);
+            break;
+        case 'e':
+            vec3.scaleAndAdd(cameraPosition, cameraPosition, viewUp, -translationAmount);
+            vec3.scaleAndAdd(lookAtPoint, lookAtPoint, viewUp, -translationAmount);
+            break;
+
+        // Rotation around view Y (yaw left/right)
+        case 'A':
+            var yawMatrix = mat4.create();
+            mat4.rotate(yawMatrix, yawMatrix, rotationAmount, viewUp);
+            vec3.transformMat4(viewDirection, viewDirection, yawMatrix);
+            vec3.add(lookAtPoint, cameraPosition, viewDirection);
+            vec3.cross(viewRight, viewDirection, upVector);
+            vec3.normalize(viewRight, viewRight);
+            break;
+        case 'D':
+            var yawMatrix = mat4.create();
+            mat4.rotate(yawMatrix, yawMatrix, -rotationAmount, viewUp);
+            vec3.transformMat4(viewDirection, viewDirection, yawMatrix);
+            vec3.add(lookAtPoint, cameraPosition, viewDirection);
+            vec3.cross(viewRight, viewDirection, upVector);
+            vec3.normalize(viewRight, viewRight);
+            break;
+
+        // Rotation around view X (pitch up/down)
+        case 'W':
+            var pitchMatrix = mat4.create();
+            mat4.rotate(pitchMatrix, pitchMatrix, rotationAmount, viewRight);
+            vec3.transformMat4(viewDirection, viewDirection, pitchMatrix);
+            vec3.add(lookAtPoint, cameraPosition, viewDirection);
+            vec3.cross(viewUp, viewRight, viewDirection);
+            vec3.normalize(viewUp, viewUp);
+            break;
+        case 'S':
+            var pitchMatrix = mat4.create();
+            mat4.rotate(pitchMatrix, pitchMatrix, -rotationAmount, viewRight);
+            vec3.transformMat4(viewDirection, viewDirection, pitchMatrix);
+            vec3.add(lookAtPoint, cameraPosition, viewDirection);
+            vec3.cross(viewUp, viewRight, viewDirection);
+            vec3.normalize(viewUp, viewUp);
+            break;
+    }
+
+    renderTriangles(); // re-render after camera change
+}
 
 // get the JSON file from the passed URL
 function getJSONFile(url,descr) {
@@ -288,12 +383,9 @@ function setupShaders() {
 function renderTriangles() {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // clear frame/depth buffers
 
-    // Create view matrix: eye at (0.5, 0.5, -0.5), looking at (0.5, 0.5, 0)
+    // Create view matrix using dynamic camera vectors
     var viewMatrix = mat4.create();
-    var lookAtPoint = vec3.fromValues(0.5, 0.5, 0.0);
-    var upVector = vec3.fromValues(0.0, 1.0, 0.0);
-    var eyePos = vec3.fromValues(0.5, 0.5, -0.5);
-    mat4.lookAt(viewMatrix, eyePos, lookAtPoint, upVector);
+    mat4.lookAt(viewMatrix, cameraPosition, lookAtPoint, viewUp);
 
     // Create projection matrix
     var projMatrix = mat4.create();
@@ -353,7 +445,7 @@ function renderTriangles() {
     // Send uniforms to shader
     gl.uniformMatrix4fv(mvpUniform, false, mvpMatrix);
     gl.uniform3f(lightPosUniform, -0.5, 1.5, -0.5); // Light at (-0.5, 1.5, -0.5)
-    gl.uniform3f(eyePosUniform, 0.5, 0.5, -0.5); // Eye at (0.5, 0.5, -0.5)
+    gl.uniform3fv(eyePosUniform, cameraPosition); // Dynamic eye position
 
     // Draw all triangles
     gl.drawArrays(gl.TRIANGLES,0,numTriangles * 3);
@@ -363,10 +455,14 @@ function renderTriangles() {
 /* MAIN -- HERE is where execution begins after window load */
 
 function main() {
-  
+
   setupWebGL(); // set up the webGL environment
   loadTriangles(); // load in the triangles from tri file
   setupShaders(); // setup the webGL shaders
+  initViewVectors(); // initialize camera view vectors
   renderTriangles(); // draw the triangles using webGL
-  
+
+  // Add keyboard event listener for camera control
+  document.addEventListener('keypress', handleKeyPress);
+
 } // end main
